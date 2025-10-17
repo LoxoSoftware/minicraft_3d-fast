@@ -4899,14 +4899,14 @@ typedef int32_t fix;
 #define I2F(i) ((fix)((i) << 16))
 #define F2I(x) ((int)((x) >> 16))
 static inline fix fmuli(fix a, fix b){ return (fix)(((int64_t)a * b) >> 16); }
-static inline fix fdivi(fix a, fix b){ 
+static inline fix fdivi(fix a, fix b){
     if(b == 0) return (a < 0) ? -FONE*1000 : FONE*1000;
-    return (fix)(((int64_t)a << 16) / b); 
+    return (fix)(Div((int32_t)a<<8, b)<<8);
 }
 static inline fix flerp(fix a, fix b, fix t){ return a + fmuli((b-a), t); }
 static inline fix fixabs(fix x){ return (x < 0) ? -x : x; }
 
-fix IWRAM_CODE fsqrt(fix n) {
+fix IWRAM_CODE ARM_CODE fsqrt(fix n) {
     if (n <= 0) return 0;
     fix root = n, last;
     int iter = 0;
@@ -4923,7 +4923,7 @@ typedef struct { fix x,y,z; } v3;
 #define LUT_N 512
 static EWRAM_DATA fix sinLUT[LUT_N];
 static inline fix fsin(int a){ return sinLUT[a & (LUT_N-1)]; }
-static inline fix fcos(int a){ return sinLUT[(a + LUT_N/4) & (LUT_N-1)]; }
+static inline fix fcos(int a){ return sinLUT[(a + (LUT_N>>2)) & (LUT_N-1)]; }
 
 #define INVZ_LUT_SIZE 256
 #define INVZ_NEAR_FIX F(0.25f)
@@ -4984,7 +4984,7 @@ static void buildPalette(void){
 static EWRAM_DATA u8 world[CW*CH*CD];
 static inline int widx(int x,int y,int z){ 
     if(x < 0 || x >= CW || y < 0 || y >= CH || z < 0 || z >= CD){
-        return CW*CH*CD/2;
+        return (CW*CH*CD)>>1;
     }
     return (y*CD + z)*CW + x; 
 }
@@ -5082,10 +5082,10 @@ static void gen_world(void){
 typedef struct { v3 pos; int yaw, pitch; v3 vel; bool onGround; } Player;
 static Player pl;
 
-static IWRAM_CODE inline bool cam_basis(v3* fx, v3* fy, v3* fz){
+static bool cam_basis(v3* fx, v3* fy, v3* fz){
     pl.yaw = pl.yaw & (LUT_N-1);
-    int p_min = -LUT_N/4 + 5;
-    int p_max =  LUT_N/4 - 5;
+    int p_min = -(LUT_N>>2) + 5;
+    int p_max =  (LUT_N>>2) - 5;
     if(pl.pitch > p_max) pl.pitch = p_max;
     if(pl.pitch < p_min) pl.pitch = p_min;
     
@@ -5110,7 +5110,7 @@ static struct {
     bool rotation_active;
 } input_state = {false, false};
 
-static IWRAM_CODE void handle_input(void){
+static void handle_input(void){
     scanKeys();
     u16 k = keysHeld();
     bool select_held = (k & KEY_SELECT);
@@ -5158,8 +5158,8 @@ static IWRAM_CODE void handle_input(void){
             if(k & KEY_R) { pl.pitch += 3; input_state.rotation_active = true; }
         }
     }
-    int p_min = -LUT_N/4 + 5;
-    int p_max =  LUT_N/4 - 5;
+    int p_min = -(LUT_N>>2) + 5;
+    int p_max =  (LUT_N>>2) - 5;
     if(pl.pitch > p_max) pl.pitch = p_max;
     if(pl.pitch < p_min) pl.pitch = p_min;
 }
@@ -5172,7 +5172,7 @@ static inline bool solid_at(int x,int y,int z){
     return (t != BLK_WATER && t != BLK_LEAF);
 }
 
-static IWRAM_CODE void collide_axis(char axis){
+static IWRAM_CODE ARM_CODE void collide_axis(char axis){
     fix r = F(0.3f), h = F(1.6f);
     int minx = F2I(pl.pos.x - r) - 1, maxx = F2I(pl.pos.x + r) + 1;
     int miny = F2I(pl.pos.y) - 1,     maxy = F2I(pl.pos.y + h) + 1;
@@ -5211,12 +5211,16 @@ static IWRAM_CODE void collide_axis(char axis){
     }
 }
 
-static IWRAM_CODE void physics_step(void){
+#define PHYS_GRAV_FIX (F(135.0f/60.f/60.f))
+#define PHYS_MAG_1 (-F(108.0f/60.f))
+#define PHYS_MAG_2 (F(15.0f/60.f))
+
+static IWRAM_CODE ARM_CODE void physics_step(void){
     SET_STAGE("physics");
-    fix gravity = F(135.0f/60.f/60.f);
+    fix gravity = PHYS_GRAV_FIX;
     pl.onGround = false;
     pl.vel.y -= gravity;
-    if(pl.vel.y < -F(108.0f/60.f)) pl.vel.y = -F(108.0f/60.f);
+    if(pl.vel.y < PHYS_MAG_1) pl.vel.y = PHYS_MAG_1;
     
     pl.pos.x += pl.vel.x; collide_axis('x');
     pl.pos.y += pl.vel.y; collide_axis('y');
@@ -5228,15 +5232,15 @@ static IWRAM_CODE void physics_step(void){
     if(pl.pos.z > I2F(CD-2)) pl.pos.z = I2F(CD-2);
     if(pl.pos.y > I2F(CH-2)) pl.pos.y = I2F(CH-2);
     
-    if(pl.vel.x > F(15.0f/60.f)) pl.vel.x = F(15.0f/60.f);
-    if(pl.vel.x < -F(15.0f/60.f)) pl.vel.x = -F(15.0f/60.f);
-    if(pl.vel.z > F(15.0f/60.f)) pl.vel.z = F(15.0f/60.f);
-    if(pl.vel.z < -F(15.0f/60.f)) pl.vel.z = -F(15.0f/60.f);
+    if(pl.vel.x > PHYS_MAG_2) pl.vel.x = PHYS_MAG_2;
+    if(pl.vel.x < PHYS_MAG_2) pl.vel.x = PHYS_MAG_2;
+    if(pl.vel.z > PHYS_MAG_2) pl.vel.z = PHYS_MAG_2;
+    if(pl.vel.z < PHYS_MAG_2) pl.vel.z = PHYS_MAG_2;
     
     if(pl.pos.y < -I2F(10)){
-        pl.pos.x = I2F(CW/2); 
+        pl.pos.x = I2F(CW>>1);
         pl.pos.y = I2F(25); 
-        pl.pos.z = I2F(CD/2); 
+        pl.pos.z = I2F(CD>>1);
         pl.vel.x = pl.vel.y = pl.vel.z = 0;
     }
 }
@@ -5265,7 +5269,7 @@ static inline bool air_or_outside(int x,int y,int z){
     return world[widx(x,y,z)] == 0;
 }
 
-static IWRAM_CODE inline bool in_view_frustum(fix bx, fix by, fix bz, const v3* fz, const v3* fx, const v3* fy, const v3* cam_pos){
+static IWRAM_CODE ARM_CODE inline bool in_view_frustum(fix bx, fix by, fix bz, const v3* fz, const v3* fx, const v3* fy, const v3* cam_pos){
     fix dx = bx - cam_pos->x;
     fix dy = by - cam_pos->y;
     fix dz = bz - cam_pos->z;
@@ -5287,7 +5291,7 @@ static IWRAM_CODE inline bool in_view_frustum(fix bx, fix by, fix bz, const v3* 
     return true;
 }
 
-static IWRAM_CODE void emit_face_if_visible(int x,int y,int z, u8 blk, u8 dir, const v3* fz, const v3* cam_pos){
+static IWRAM_CODE ARM_CODE void emit_face_if_visible(int x,int y,int z, u8 blk, u8 dir, const v3* fz, const v3* cam_pos){
     bool vis = false;
     int nx=x,ny=y,nz=z;
     switch(dir){
@@ -5335,7 +5339,7 @@ static IWRAM_CODE void emit_face_if_visible(int x,int y,int z, u8 blk, u8 dir, c
     }
 }
 
-static IWRAM_CODE inline v3 world_to_cam(fix wx, fix wy, fix wz, const v3* fx, const v3* fy, const v3* fz, const v3* cam_pos){
+static IWRAM_CODE ARM_CODE inline v3 world_to_cam(fix wx, fix wy, fix wz, const v3* fx, const v3* fy, const v3* fz, const v3* cam_pos){
     v3 rel; rel.x = wx - cam_pos->x; rel.y = wy - cam_pos->y; rel.z = wz - cam_pos->z;
     v3 out;
     out.x = fmuli(rel.x, fx->x) + fmuli(rel.y, fx->y) + fmuli(rel.z, fx->z);
@@ -5344,7 +5348,7 @@ static IWRAM_CODE inline v3 world_to_cam(fix wx, fix wy, fix wz, const v3* fx, c
     return out;
 }
 
-static IWRAM_CODE inline bool cam_to_screen(const v3* pc, int* sx, int* sy){
+static IWRAM_CODE ARM_CODE inline bool cam_to_screen(const v3* pc, int* sx, int* sy){
     if(pc->z <= g_near_z) return false;
     fix invz = fmuli(g_focal, fast_invz(pc->z));
     int x = (W>>1) + F2I(fmuli(pc->x, invz));
@@ -5356,16 +5360,16 @@ static IWRAM_CODE inline bool cam_to_screen(const v3* pc, int* sx, int* sy){
 static inline void clear_vram_fast(void){
     SET_STAGE("vram_clear");
     static const u32 zero = 0;
-    CpuFastSet(&zero, (void*)backbuffer, (W*H/4) | COPY32 | FILL);
+    CpuFastSet(&zero, (void*)backbuffer, ((W*H)>>2) | COPY32 | FILL);
 }
 
 static inline void memset_page8(volatile u8* page, u8 val){
     u32 pat = (u32)val;
     pat |= pat<<8; pat |= pat<<16;
-    CpuFastSet(&pat, (void*)page, (W*H/4) | COPY32 | FILL);
+    CpuFastSet(&pat, (void*)page, ((W*H)>>2) | COPY32 | FILL);
 }
 
-static IWRAM_CODE inline void draw_span_idx(int y, int x0, int x1, u8 color){
+static IWRAM_CODE ARM_CODE inline void draw_span_idx(int y, int x0, int x1, u8 color){
     if(y < 0 || y >= H) return;
     if(x0 > x1) { int t=x0; x0=x1; x1=t; }
     if(x1 < 0 || x0 >= W) return;
@@ -5403,7 +5407,7 @@ static inline void sort3_by_y(int* x0,int* y0,int* x1,int* y1,int* x2,int* y2){
     if(*y2 < *y1){ int tx=*x1;*x1=*x2;*x2=tx; int ty=*y1;*y1=*y2;*y2=ty; }
 }
 
-static IWRAM_CODE void draw_tri_filled(int x0,int y0,int x1,int y1,int x2,int y2, u8 color){
+static IWRAM_CODE ARM_CODE void draw_tri_filled(int x0,int y0,int x1,int y1,int x2,int y2, u8 color){
     sort3_by_y(&x0,&y0,&x1,&y1,&x2,&y2);
     if(y0==y2) return;
     if(y2 < 0 || y0 >= H) return;
@@ -5412,9 +5416,9 @@ static IWRAM_CODE void draw_tri_filled(int x0,int y0,int x1,int y1,int x2,int y2
     int dy02 = y2 - y0;
     int dy12 = y2 - y1;
 
-    fix sx02 = (dy02)? (((x2 - x0) << 16) / dy02) : 0;
-    fix sx01 = (dy01)? (((x1 - x0) << 16) / dy01) : 0;
-    fix sx12 = (dy12)? (((x2 - x1) << 16) / dy12) : 0;
+    fix sx02 = (dy02)? Div(((x2 - x0) << 16), dy02) : 0;
+    fix sx01 = (dy01)? Div(((x1 - x0) << 16), dy01) : 0;
+    fix sx12 = (dy12)? Div(((x2 - x1) << 16), dy12) : 0;
 
     fix fxL = I2F(x0);
     fix fxR = I2F(x0);
@@ -5445,12 +5449,12 @@ static IWRAM_CODE void draw_tri_filled(int x0,int y0,int x1,int y1,int x2,int y2
     }
 }
 
-static IWRAM_CODE void draw_quad_2d(int x0,int y0,int x1,int y1,int x2,int y2,int x3,int y3, u8 color){
+static inline void draw_quad_2d(int x0,int y0,int x1,int y1,int x2,int y2,int x3,int y3, u8 color){
     draw_tri_filled(x0,y0,x1,y1,x2,y2, color);
     draw_tri_filled(x0,y0,x2,y2,x3,y3, color);
 }
 
-static IWRAM_CODE void project_and_draw_quad(const v3* q, u8 blk_type, u8 shade,
+static IWRAM_CODE ARM_CODE void project_and_draw_quad(const v3* q, u8 blk_type, u8 shade,
                                              const v3* fx, const v3* fy, const v3* fz,
                                              const v3* cam_pos){
     int sx[4], sy[4], behind = 0, minx = W, maxx = -1;
@@ -5465,7 +5469,7 @@ static IWRAM_CODE void project_and_draw_quad(const v3* q, u8 blk_type, u8 shade,
     draw_quad_2d(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2],sx[3],sy[3], colorIdx);
 }
 
-static IWRAM_CODE void draw_block_face(const Face* f, const v3* fx, const v3* fy, const v3* fz, const v3* cam_pos){
+static IWRAM_CODE ARM_CODE void draw_block_face(const Face* f, const v3* fx, const v3* fy, const v3* fz, const v3* cam_pos){
     fix x = I2F(f->x), y = I2F(f->y), z = I2F(f->z);
     fix x1 = I2F(f->x+1), y1 = I2F(f->y+1), z1 = I2F(f->z+1);
 
@@ -5568,7 +5572,7 @@ static IWRAM_CODE void draw_block_face(const Face* f, const v3* fx, const v3* fy
     draw_quad_2d(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2],sx[3],sy[3], colorIdx);
 }
 
-static IWRAM_CODE void sort_faces_insertion(Face* arr, int n){
+static IWRAM_CODE ARM_CODE void sort_faces_insertion(Face* arr, int n){
     SET_STAGE("face_sort");
     for(int i=1; i<n; i++){
         Face key = arr[i];
@@ -5590,7 +5594,7 @@ static void draw_block_bar(u8 selected_blk){
     const int bar_y = H - bar_h;
     const int slot_w = 22;
     const int slots = 5;
-    const int bar_start_x = (W - slots * slot_w) / 2;
+    const int bar_start_x = (W - slots * slot_w) >> 1;
     
     u8 bg_color = shadeIdx[BLK_STONE][5];
     for(int y = bar_y; y < H; y++){
@@ -5623,8 +5627,8 @@ static void draw_block_bar(u8 selected_blk){
         
         u8 cube_color = shadeIdx[blk_type][25];
         int cube_size = 11;
-        int cube_x = x + (slot_w - cube_size) / 2;
-        int cube_y = bar_y + (bar_h - cube_size) / 2;
+        int cube_x =  x + ( (slot_w - cube_size) >> 1 );
+        int cube_y =  bar_y + ( (bar_h - cube_size) >> 1 );
         
         for(int cy = cube_y; cy < cube_y + cube_size && cy < H; cy++){
             for(int cx = cube_x; cx < cube_x + cube_size && cx < W; cx++){
@@ -6112,11 +6116,7 @@ static void show_menu(void){
     memset_page8(VRAM_PAGE1, 0);
 }
 
-
-
-static IWRAM_CODE void render_poly(u8 selected_block){
-    SET_STAGE("render_start");
-    
+static IWRAM_CODE ARM_CODE void render_poly(u8 selected_block){
     if(g_vis_dist < 2) g_vis_dist = 2;
     if(g_vis_dist > 20) g_vis_dist = 20;
     if(g_focal < F(50.0f)) g_focal = F(50.0f);
@@ -6124,7 +6124,6 @@ static IWRAM_CODE void render_poly(u8 selected_block){
     
     clear_vram_fast();
 
-    SET_STAGE("cam_setup");
     v3 fx, fy, fz;
     if(!cam_basis(&fx, &fy, &fz)){
         LOG_ERROR("Camera basis failed");
@@ -6132,7 +6131,6 @@ static IWRAM_CODE void render_poly(u8 selected_block){
     }
     v3 cam_pos = { pl.pos.x, pl.pos.y + F(1.5f), pl.pos.z };
 
-    SET_STAGE("face_gather");
     faceCount = 0;
     
     int cx = F2I(pl.pos.x), cy = F2I(pl.pos.y + F(0.5f)), cz = F2I(pl.pos.z);
@@ -6180,12 +6178,10 @@ static IWRAM_CODE void render_poly(u8 selected_block){
         sort_faces_insertion(faceBuf, faceCount);
     }
 
-    SET_STAGE("face_draw");
     for(int i=0;i<faceCount;i++){
         draw_block_face(&faceBuf[i], &fx,&fy,&fz, &cam_pos);
     }
 
-    SET_STAGE("ui_draw");
     u8 cross_idx = shadeIdx[BLK_STONE][31];
     int cxp = W/2, cyp = H/2;
     for(int i=-4;i<=4;i++){
@@ -6197,81 +6193,24 @@ static IWRAM_CODE void render_poly(u8 selected_block){
     draw_block_bar(selected_block);
 }
 
-
-int main(void){
-    SET_STAGE("init");
-    irqInit();
-    irqEnable(IRQ_VBLANK);
-    REG_DISPCNT = MODE_4 | BG2_ENABLE | BACKBUFFER;
-
-    dbg_init();
-    LOGI("=== MINICRAFT GBA - Fixed Build ===");
-
-    show_menu();
-
-    SET_STAGE("lut_build");
-    for(int i=0;i<LUT_N;i++){
-        sinLUT[i] = F(sinf((float)i * 2.0f * 3.14159265f / (float)LUT_N));
-    }
-    build_invz_lut();
-    
-    SET_STAGE("palette");
-    buildPalette();
-    
-    SET_STAGE("worldgen");
-    gen_world();
-
-    SET_STAGE("player_init");
-    int spawn_x = CW/2;
-    int spawn_z = CD/2;
-    int spawn_y = CH - 1;
-    
-    if(g_world_superflat){
-        spawn_y = 11;
-    } else {
-        for(int y = CH-1; y >= 0; y--){
-            u8 block_id = world[widx(spawn_x, y, spawn_z)];
-            if(block_id != 0){
-                u8 block_type = block_id - 1;
-                if(block_type != BLK_WATER && block_type != BLK_LEAF){
-                    spawn_y = y + 1;
-                    break;
-                }
-            }
-        }
-        if(spawn_y < 10) spawn_y = 25;
-    }
-    
-    pl.pos.x = I2F(spawn_x);
-    pl.pos.y = I2F(spawn_y);
-    pl.pos.z = I2F(spawn_z);
-    pl.yaw = LUT_N/2;
-    pl.pitch = 0;
-    pl.vel.x = pl.vel.y = pl.vel.z = 0;
-    pl.onGround = false;
-    
-    LOGI("Player spawned at (%d,%d,%d)", spawn_x, spawn_y, spawn_z);
-
+IWRAM_CODE ARM_CODE void mainloop()
+{
     u8 curBlk = BLK_GRASS + 1;
     u32 frame = 0;
     u8 tuning_cooldown = 0;
     u8 action_cooldown = 0;
     bool select_was_held = false;
 
-    LOGI("Init complete. Entering main loop.");
-    SET_STAGE("main_loop");
-
     while(1){
-        vblank();
-        
+
         if(tuning_cooldown > 0) tuning_cooldown--;
         if(action_cooldown > 0) action_cooldown--;
-        
+
         handle_input();
 
         u16 kh = keysHeld();
         bool select_held = (kh & KEY_SELECT);
-        
+
         bool select_mode_changed = (select_held != select_was_held);
         select_was_held = select_held;
 
@@ -6354,7 +6293,6 @@ int main(void){
         v3 cam_pos = { pl.pos.x, pl.pos.y + F(1.5f), pl.pos.z };
 
         if((kh & KEY_A) && !select_held && !select_mode_changed && action_cooldown == 0){
-            SET_STAGE("break_block");
             fix step = F(0.25f);
             v3 p = cam_pos;
             for(int s=0; s<g_vis_dist*8; s++){
@@ -6372,9 +6310,8 @@ int main(void){
                 }
             }
         }
-        
+
         if((kh & KEY_A) && select_held && !select_mode_changed && action_cooldown == 0){
-            SET_STAGE("place_block");
             fix step = F(0.25f);
             v3 p = cam_pos;
             int last_air_x=-1,last_air_y=-1,last_air_z=-1;
@@ -6397,7 +6334,7 @@ int main(void){
                 }
             }
         }
-        
+
 
         if(select_held && (kh & KEY_START) && action_cooldown == 0){
             u8 buildable[] = {BLK_GRASS+1, BLK_DIRT+1, BLK_STONE+1, BLK_WATER+1, BLK_WOOD+1};
@@ -6421,4 +6358,64 @@ int main(void){
                  faceCount, block_names[curBlk-1]);
         }
     }
+}
+
+int main(void){
+    SET_STAGE("init");
+    irqInit();
+    irqEnable(IRQ_VBLANK);
+    REG_DISPCNT = MODE_4 | BG2_ENABLE | BACKBUFFER;
+
+    dbg_init();
+    LOGI("=== MINICRAFT GBA - Fixed Build ===");
+
+    show_menu();
+
+    SET_STAGE("lut_build");
+    for(int i=0;i<LUT_N;i++){
+        sinLUT[i] = F(sinf((float)i * 2.0f * 3.14159265f / (float)LUT_N));
+    }
+    build_invz_lut();
+    
+    SET_STAGE("palette");
+    buildPalette();
+    
+    SET_STAGE("worldgen");
+    gen_world();
+
+    SET_STAGE("player_init");
+    int spawn_x = CW/2;
+    int spawn_z = CD/2;
+    int spawn_y = CH - 1;
+    
+    if(g_world_superflat){
+        spawn_y = 11;
+    } else {
+        for(int y = CH-1; y >= 0; y--){
+            u8 block_id = world[widx(spawn_x, y, spawn_z)];
+            if(block_id != 0){
+                u8 block_type = block_id - 1;
+                if(block_type != BLK_WATER && block_type != BLK_LEAF){
+                    spawn_y = y + 1;
+                    break;
+                }
+            }
+        }
+        if(spawn_y < 10) spawn_y = 25;
+    }
+    
+    pl.pos.x = I2F(spawn_x);
+    pl.pos.y = I2F(spawn_y);
+    pl.pos.z = I2F(spawn_z);
+    pl.yaw = LUT_N/2;
+    pl.pitch = 0;
+    pl.vel.x = pl.vel.y = pl.vel.z = 0;
+    pl.onGround = false;
+    
+    LOGI("Player spawned at (%d,%d,%d)", spawn_x, spawn_y, spawn_z);
+
+    LOGI("Init complete. Entering main loop.");
+    SET_STAGE("main_loop");
+
+    mainloop();
 }
