@@ -319,7 +319,7 @@ static void handle_input(void){
     
     v3 wish = {0,0,0};
     input_state.movement_active = false;
-    if(!select_held && !(k & (KEY_L|KEY_R))){
+    if(!select_held){
         if(k & KEY_UP)   { wish.x += fz.x; wish.z += fz.z; input_state.movement_active = true; }
         if(k & KEY_DOWN) { wish.x -= fz.x; wish.z -= fz.z; input_state.movement_active = true; }
         if(k & KEY_LEFT) { wish.x -= fx.x; wish.z -= fx.z; input_state.movement_active = true; }
@@ -340,15 +340,13 @@ static void handle_input(void){
     if((k & KEY_B) && pl.onGround && !select_held) pl.vel.y = F(22.5f/60.f);
 
     input_state.rotation_active = false;
-    if(!input_state.movement_active){
-        if(!select_held){
-            if(k & KEY_L) { pl.yaw = (pl.yaw - turn_speed) & (LUT_N-1); input_state.rotation_active = true; }
-            if(k & KEY_R) { pl.yaw = (pl.yaw + turn_speed) & (LUT_N-1); input_state.rotation_active = true; }
-        }
-        if(select_held){
-            if(k & KEY_L) { pl.pitch -= 3; input_state.rotation_active = true; }
-            if(k & KEY_R) { pl.pitch += 3; input_state.rotation_active = true; }
-        }
+    if(!select_held){
+        if(k & KEY_L) { pl.yaw = (pl.yaw - turn_speed) & (LUT_N-1); input_state.rotation_active = true; }
+        if(k & KEY_R) { pl.yaw = (pl.yaw + turn_speed) & (LUT_N-1); input_state.rotation_active = true; }
+    }
+    if(!input_state.movement_active && select_held){
+        if(k & KEY_L) { pl.pitch -= 3; input_state.rotation_active = true; }
+        if(k & KEY_R) { pl.pitch += 3; input_state.rotation_active = true; }
     }
     int p_min = -(LUT_N>>2) + 5;
     int p_max =  (LUT_N>>2) - 5;
@@ -437,7 +435,7 @@ static IWRAM_CODE ARM_CODE void physics_step(void){
     }
 }
 
-static int g_vis_dist = 6;
+static int g_vis_dist = 8;
 static fix g_focal    = F(130.0f);
 static fix g_frustum_margin = F(1.2f);
 static fix g_near_z = F(0.25f);
@@ -461,7 +459,7 @@ static inline bool air_or_outside(int x,int y,int z){
     return world[widx(x,y,z)] == 0;
 }
 
-static IWRAM_CODE ARM_CODE inline bool in_view_frustum(fix bx, fix by, fix bz, const v3* fz, const v3* fx, const v3* fy, const v3* cam_pos){
+static IWRAM_CODE ARM_CODE bool in_view_frustum(fix bx, fix by, fix bz, const v3* fz, const v3* fx, const v3* fy, const v3* cam_pos){
     fix dx = bx - cam_pos->x;
     fix dy = by - cam_pos->y;
     fix dz = bz - cam_pos->z;
